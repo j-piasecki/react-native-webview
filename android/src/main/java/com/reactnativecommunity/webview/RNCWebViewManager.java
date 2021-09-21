@@ -4,7 +4,9 @@ import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.DownloadManager;
+import android.content.ActivityNotFoundException;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -90,6 +92,7 @@ import org.json.JSONObject;
 
 import java.io.UnsupportedEncodingException;
 import java.net.MalformedURLException;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.util.ArrayList;
@@ -99,6 +102,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Manages instances of {@link WebView}
@@ -126,6 +131,7 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 @ReactModule(name = RNCWebViewManager.REACT_CLASS)
 public class RNCWebViewManager extends SimpleViewManager<WebView> {
+  private static final String EXTRA_BROWSER_FALLBACK_URL = "browser_fallback_url";
   private static final String TAG = "RNCWebViewManager";
 
   public static final int COMMAND_GO_BACK = 1;
@@ -631,6 +637,15 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
       }
     }
   }
+  
+  @ReactProp(name = "originWhitelist")
+  public void setOriginWhitelist(WebView view, ReadableArray whitelist) {
+    String[] list = new String[whitelist.size()];
+    for (int i = 0; i < list.length; i++) {
+      list[i] = whitelist.getString(i).replace("*", ".*");
+    }
+    ((RNCWebView) view).setOriginWhitelist(list);
+  }
 
   @Override
   protected void addEventEmitters(ThemedReactContext reactContext, WebView view) {
@@ -904,7 +919,43 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
               if (SystemClock.elapsedRealtime() - startTime > SHOULD_OVERRIDE_URL_LOADING_TIMEOUT) {
                 FLog.w(TAG, "Did not receive response to shouldOverrideUrlLoading in time, defaulting to allow loading.");
                 RNCWebViewModule.shouldOverrideUrlLoadingLock.removeLock(lockIdentifier);
-                return false;
+
+                boolean shouldOverride = true;
+
+                Pattern pattern = Pattern.compile("^[A-Za-z][A-Za-z0-9+\\-.]+:(\\/\\/)?[^/]*");
+                for (String whitelistEntry : rncWebView.originWhitelist) {
+                  Matcher matcher = pattern.matcher(whitelistEntry);
+                  if (matcher.find()) {
+                    String origin = matcher.group();
+                    Pattern originPattern = Pattern.compile(origin);
+
+                    if (originPattern.matcher(url).matches()) {
+                      shouldOverride = false;
+                    }
+                  }
+                }
+
+                if (!shouldOverride) {
+                  try {
+                    Intent intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+                    if (intent.resolveActivity(view.getContext().getPackageManager()) == null) {
+                      String fallback = intent.getStringExtra(EXTRA_BROWSER_FALLBACK_URL);
+                      if (fallback != null) {
+                        intent = Intent.parseUri(fallback, 0);
+                      }
+                    }
+                    view.getContext().startActivity(intent);
+                    return true;
+                  } catch (URISyntaxException e) {
+                    e.printStackTrace();
+                    shouldOverride = false;
+                  } catch (ActivityNotFoundException e) {
+                    e.printStackTrace();
+                    shouldOverride = false;
+                  }
+                }
+
+                return shouldOverride;
               }
               lockObject.wait(SHOULD_OVERRIDE_URL_LOADING_TIMEOUT);
             }
@@ -1446,6 +1497,7 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
     protected boolean hasScrollEvent = false;
     protected boolean nestedScrollEnabled = false;
     protected ProgressChangedFilter progressChangedFilter;
+    protected String[] originWhitelist;
 
     /**
      * WebView must be created with an context of the current activity
@@ -1473,6 +1525,10 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
 
     public void setNestedScrollEnabled(boolean nestedScrollEnabled) {
       this.nestedScrollEnabled = nestedScrollEnabled;
+    }
+
+    public void setOriginWhitelist(String[] list) {
+      this.originWhitelist = list;
     }
 
     @Override

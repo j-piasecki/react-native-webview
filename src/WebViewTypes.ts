@@ -306,6 +306,7 @@ export interface AndroidNativeWebViewProps extends CommonNativeWebViewProps {
   nestedScrollEnabled?: boolean;
   readonly urlPrefixesForDefaultIntent?: string[];
   forceDarkOn?: boolean;
+  originWhitelist?: string[];
 }
 
 export declare type ContentInsetAdjustmentBehavior = 'automatic' | 'scrollableAxes' | 'never' | 'always';
